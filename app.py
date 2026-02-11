@@ -156,13 +156,13 @@ def load_stock_data(ticker: str, days: int):
         start = end - timedelta(days=days + 10)
         hist = tk.history(start=start, end=end)
         if hist.empty:
-            return None, None
+            return None, "Empty history returned"
         info = tk.info
         return hist, info
     try:
         return _retry_on_rate_limit(_fetch)
-    except Exception:
-        return None, None
+    except Exception as e:
+        return None, str(e)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -192,24 +192,21 @@ def get_option_chain(ticker: str, expiration: str):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_option_contract_history(contract_symbol: str, days: int = -1):
-    """Fetch historical price data for a specific option contract.
-    
-    Args:
-        contract_symbol: OCC option ticker.
-        days: Lookback in days. Use -1 for max available history.
-    """
+    """Fetch historical price data for a specific option contract using Ticker.history."""
     def _fetch():
+        tk = yf.Ticker(contract_symbol)
+        
         if days <= 0:
-            data = yf.download(contract_symbol, period="max", progress=False)
+            data = tk.history(period="max")
         else:
             end = datetime.now()
             start = end - timedelta(days=days)
-            data = yf.download(contract_symbol, start=start, end=end, progress=False)
+            data = tk.history(start=start, end=end)
+            
         if data.empty:
             return None
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
         return data
+        
     try:
         return _retry_on_rate_limit(_fetch)
     except Exception:
@@ -533,13 +530,17 @@ active_timeframe = st.session_state.get("loaded_timeframe", timeframe)
 days = TIMEFRAMES[active_timeframe]
 
 # ── Load stock data ──
-with st.spinner(f"Loading {active_ticker} data..."):
+with st.spinner(f"Loading data for {active_ticker}..."):
     hist, info = load_stock_data(active_ticker, days)
 
-if hist is None or hist.empty:
-    st.error(f"❌ Could not load data for **{active_ticker}**. Check the ticker symbol and try again.")
+if hist is None:
+    if info: # Should be error message string in second return value if hist is None
+         st.error(f"Could not load data for {active_ticker}. Error: {info}")
+    else:
+         st.error(f"Could not load data for {active_ticker}. Check the ticker symbol and try again.")
     st.stop()
 
+current_price = hist["Close"].iloc[-1]
 # Trim to requested timeframe
 cutoff = datetime.now() - timedelta(days=days)
 hist = hist[hist.index >= cutoff.strftime("%Y-%m-%d")]
