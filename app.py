@@ -133,13 +133,14 @@ with st.sidebar:
 # ──────────────────────────────────────────────
 import time
 
-def _retry_on_rate_limit(func, max_retries=3, base_delay=2):
+def _retry_on_rate_limit(func, max_retries=4, base_delay=3):
     """Retry a yfinance call with exponential backoff on rate limit errors."""
     for attempt in range(max_retries):
         try:
             return func()
         except Exception as e:
-            if "RateLimit" in type(e).__name__ or "rate" in str(e).lower():
+            err_str = str(e).lower()
+            if "RateLimit" in type(e).__name__ or "rate" in err_str or "429" in err_str or "too many requests" in err_str:
                 if attempt < max_retries - 1:
                     time.sleep(base_delay * (2 ** attempt))
                     continue
@@ -151,6 +152,7 @@ def _retry_on_rate_limit(func, max_retries=3, base_delay=2):
 def load_stock_data(ticker: str, days: int):
     """Fetch stock price history."""
     def _fetch():
+        time.sleep(1.0)  # Throttling
         tk = yf.Ticker(ticker)
         end = datetime.now()
         start = end - timedelta(days=days + 10)
@@ -169,6 +171,7 @@ def load_stock_data(ticker: str, days: int):
 def load_options_chain(ticker: str):
     """Fetch all available options expiration dates."""
     def _fetch():
+        time.sleep(1.0)  # Throttling
         tk = yf.Ticker(ticker)
         expirations = tk.options
         if not expirations:
@@ -184,6 +187,7 @@ def load_options_chain(ticker: str):
 def get_option_chain(ticker: str, expiration: str):
     """Get calls and puts for a specific expiration."""
     def _fetch():
+        time.sleep(1.0)  # Throttling
         tk = yf.Ticker(ticker)
         chain = tk.option_chain(expiration)
         return chain.calls, chain.puts
@@ -194,6 +198,7 @@ def get_option_chain(ticker: str, expiration: str):
 def load_option_contract_history(contract_symbol: str, days: int = -1):
     """Fetch historical price data for a specific option contract using Ticker.history."""
     def _fetch():
+        time.sleep(1.5)  # Throttling (more generous for heavy history call)
         tk = yf.Ticker(contract_symbol)
         
         if days <= 0:
