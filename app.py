@@ -131,38 +131,66 @@ with st.sidebar:
 # ──────────────────────────────────────────────
 # Data loading (cached)
 # ──────────────────────────────────────────────
-@st.cache_data(ttl=300, show_spinner=False)
+import time
+
+def _retry_on_rate_limit(func, max_retries=3, base_delay=2):
+    """Retry a yfinance call with exponential backoff on rate limit errors."""
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            if "RateLimit" in type(e).__name__ or "rate" in str(e).lower():
+                if attempt < max_retries - 1:
+                    time.sleep(base_delay * (2 ** attempt))
+                    continue
+            raise
+    return None
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_stock_data(ticker: str, days: int):
     """Fetch stock price history."""
-    tk = yf.Ticker(ticker)
-    end = datetime.now()
-    start = end - timedelta(days=days + 10)  # buffer for rolling calcs
-    hist = tk.history(start=start, end=end)
-    if hist.empty:
+    def _fetch():
+        tk = yf.Ticker(ticker)
+        end = datetime.now()
+        start = end - timedelta(days=days + 10)
+        hist = tk.history(start=start, end=end)
+        if hist.empty:
+            return None, None
+        info = tk.info
+        return hist, info
+    try:
+        return _retry_on_rate_limit(_fetch)
+    except Exception:
         return None, None
-    info = tk.info
-    return hist, info
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_options_chain(ticker: str):
     """Fetch all available options expiration dates."""
-    tk = yf.Ticker(ticker)
-    expirations = tk.options
-    if not expirations:
+    def _fetch():
+        tk = yf.Ticker(ticker)
+        expirations = tk.options
+        if not expirations:
+            return None
+        return expirations
+    try:
+        return _retry_on_rate_limit(_fetch)
+    except Exception:
         return None
-    return expirations
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def get_option_chain(ticker: str, expiration: str):
     """Get calls and puts for a specific expiration."""
-    tk = yf.Ticker(ticker)
-    chain = tk.option_chain(expiration)
-    return chain.calls, chain.puts
+    def _fetch():
+        tk = yf.Ticker(ticker)
+        chain = tk.option_chain(expiration)
+        return chain.calls, chain.puts
+    return _retry_on_rate_limit(_fetch)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_option_contract_history(contract_symbol: str, days: int = -1):
     """Fetch historical price data for a specific option contract.
     
@@ -170,19 +198,20 @@ def load_option_contract_history(contract_symbol: str, days: int = -1):
         contract_symbol: OCC option ticker.
         days: Lookback in days. Use -1 for max available history.
     """
-    end = datetime.now()
-    try:
+    def _fetch():
         if days <= 0:
             data = yf.download(contract_symbol, period="max", progress=False)
         else:
+            end = datetime.now()
             start = end - timedelta(days=days)
             data = yf.download(contract_symbol, start=start, end=end, progress=False)
         if data.empty:
             return None
-        # Flatten multi-level columns if present
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         return data
+    try:
+        return _retry_on_rate_limit(_fetch)
     except Exception:
         return None
 
